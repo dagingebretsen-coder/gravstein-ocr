@@ -5,11 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Gravstein OCR - Mobil</title>
   
-  <!-- DISSE TO LINJENE ER NYE FOR PWA-STØTTE PÅ IPHONE -->
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="apple-touch-icon" href="icon.png"> <!-- Du kan legge til et ikon-bilde senere -->
 
   <!-- Tesseract.js & SheetJS -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -117,13 +115,13 @@
 
     .status-box {
       font-size: 0.9rem;
-      color: #555;
+      color: #333;
       text-align: center;
-      padding: 8px;
+      padding: 10px;
       border-radius: 8px;
       background: #EFEFF4;
       margin: 8px 0;
-      font-weight: 500;
+      font-weight: 600;
     }
 
     table {
@@ -167,10 +165,10 @@
       <input type="text" id="fieldNavn" placeholder="Fullt navn">
 
       <label class="field-label">Fødselsdato:</label>
-      <input type="text" id="fieldFoedt" placeholder="DD.MM.YYYY">
+      <input type="text" id="fieldFoedt" placeholder="DD.MM.YYYY eller D-M-YYYY">
 
       <label class="field-label">Dødsdato:</label>
-      <input type="text" id="fieldDoed" placeholder="DD.MM.YYYY">
+      <input type="text" id="fieldDoed" placeholder="DD.MM.YYYY eller D-M-YYYY">
 
       <label class="field-label">Råtekst fra OCR:</label>
       <textarea id="ocrResult" placeholder="Teksten vises her..."></textarea>
@@ -211,7 +209,6 @@
   </div>
 
   <script>
-    // JS logikken er uendret fra forrige fungerende versjon
     let registreringer = [];
     let valgtBildeFil = null;
 
@@ -226,11 +223,37 @@
       preview.src = URL.createObjectURL(valgtBildeFil);
       preview.style.display = 'block';
 
-      status.innerText = 'Bilde mottatt! Trykk nå på «2. Les ut tekst».';
-      
-      const ocrBtn = document.getElementById('ocrBtn');
-      ocrBtn.className = "btn btn-primary";
+      status.innerText = 'Bilde mottatt! Trykk på «2. Les ut tekst».';
+      document.getElementById('ocrBtn').className = "btn btn-primary";
     });
+
+    // Funksjon for å nedskalere bildet før OCR (forhindrer minnekrasj i Safari)
+    function nedskalerBilde(file, maxDim = 1200) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.85);
+        };
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+      });
+    }
 
     async function kjoerOCR() {
       if (!valgtBildeFil) {
@@ -238,18 +261,24 @@
         return;
       }
 
-      status.innerText = 'Startes OCR-skanning... Vennligst vent.';
+      status.innerText = 'Klargjør bilde for skanning...';
 
       try {
+        // Skaler ned bildet for å spare Safari-minne
+        const optimalisertBilde = await nedskalerBilde(valgtBildeFil, 1200);
+
+        status.innerText = 'Laster inn OCR-motor... Vennligst vent.';
+
         const worker = await Tesseract.createWorker('nor', 1, {
           logger: m => {
-            if (m.status === 'recognizing text') {
-              status.innerText = `Leser... ${Math.round(m.progress * 100)}%`;
-            }
+            if (m.status === 'loading tesseract core') status.innerText = 'Laster kjernemodul...';
+            else if (m.status === 'initializing tesseract') status.innerText = 'Initialiserer språk...';
+            else if (m.status === 'loading language traineddata') status.innerText = 'Laster norsk ordliste...';
+            else if (m.status === 'recognizing text') status.innerText = `Leser tekst: ${Math.round(m.progress * 100)}%`;
           }
         });
         
-        const ret = await worker.recognize(valgtBildeFil);
+        const ret = await worker.recognize(optimalisertBilde);
         const funnetTekst = ret.data.text ? ret.data.text.trim() : '';
 
         document.getElementById('ocrResult').value = funnetTekst;
@@ -259,7 +288,7 @@
         await worker.terminate();
       } catch (err) {
         console.error(err);
-        alert('OCR-feil: ' + err.message + '\nDu kan skrive inn teksten manuelt.');
+        alert('OCR-feil: ' + (err.message || err));
         status.innerText = 'Kunne ikke lese automatisk. Fyll inn manuelt.';
       }
     }
@@ -267,10 +296,14 @@
     function parsTekst(tekst) {
       if (!tekst) return;
       const linjer = tekst.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      const datoRegex = /(\d{1,2}[\.\/\-]\d{1,2}[\.\/\-]\d{2,4})/g;
+
+      // Støtter xx.xx.xxxx, xx-xx-xxxx, x-x-xxxx, x.x.xxxx, xx/xx/xxxx osv.
+      const datoRegex = /\b\d{1,2}[\.\/-]\d{1,2}[\.\/-]\d{2,4}\b/g;
       const datoer = tekst.match(datoRegex) || [];
+
       document.getElementById('fieldFoedt').value = datoer[0] || '';
       document.getElementById('fieldDoed').value = datoer[1] || '';
+
       let funnetNavn = '';
       for (let l of linjer) {
         if (!/\d/.test(l) && l.length > 2) {
@@ -286,10 +319,12 @@
       const foedt = document.getElementById('fieldFoedt').value.trim();
       const doed = document.getElementById('fieldDoed').value.trim();
       const raatekst = document.getElementById('ocrResult').value.trim();
+
       if (!navn && !raatekst) {
         alert('Fyll inn minst navn eller tekst før du legger til.');
         return;
       }
+
       registreringer.push({
         nr: registreringer.length + 1,
         tid: new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit'}),
@@ -298,6 +333,7 @@
         doed: doed,
         raatekst: raatekst
       });
+
       oppdaterTabell();
       alert('Lagret i listen!');
       nullstillForNesteBilde();
@@ -307,23 +343,30 @@
       valgtBildeFil = null;
       cameraInput.value = '';
       preview.style.display = 'none';
+
       document.getElementById('fieldNavn').value = '';
       document.getElementById('fieldFoedt').value = '';
       document.getElementById('fieldDoed').value = '';
       document.getElementById('ocrResult').value = '';
-      const ocrBtn = document.getElementById('ocrBtn');
-      ocrBtn.className = "btn btn-secondary";
+
+      document.getElementById('ocrBtn').className = "btn btn-secondary";
       status.innerText = 'Klar til å ta nytt bilde (Knapp 1).';
     }
 
     function oppdaterTabell() {
       const tbody = document.querySelector('#dataTable tbody');
       tbody.innerHTML = '';
+
       registreringer.forEach((r) => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td><strong>${r.navn || 'Uten navn'}</strong></td><td>${r.foedt}</td><td>${r.doed}</td>`;
+        tr.innerHTML = `
+          <td><strong>${r.navn || 'Uten navn'}</strong></td>
+          <td>${r.foedt}</td>
+          <td>${r.doed}</td>
+        `;
         tbody.appendChild(tr);
       });
+
       document.getElementById('count').innerText = registreringer.length;
     }
 
@@ -332,12 +375,20 @@
         alert('Ingen registrerte data i listen ennå.');
         return;
       }
+
       const excelData = registreringer.map(r => ({
-        "Nr": r.nr, "Klokkeslett": r.tid, "Navn": r.navn, "Fødselsdato": r.foedt, "Dødsdato": r.doed, "Råtekst": r.raatekst
+        "Nr": r.nr,
+        "Klokkeslett": r.tid,
+        "Navn": r.navn,
+        "Fødselsdato": r.foedt,
+        "Dødsdato": r.doed,
+        "Råtekst": r.raatekst
       }));
+
       const worksheet = XLSX.utils.json_to_sheet(excelData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Gravsteiner");
+
       const datoStr = new Date().toISOString().slice(0,10);
       XLSX.writeFile(workbook, `gravsteiner_${datoStr}.xlsx`);
     }
