@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Gravstein AI OCR - Mobil</title>
+  <title>Gravstein AI OCR - Flere personer</title>
   
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -42,6 +42,20 @@
       padding: 16px;
       margin-bottom: 16px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+
+    .person-box {
+      background: #F9F9FB;
+      border: 1px solid #E5E5EA;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .person-box h4 {
+      margin: 0 0 8px 0;
+      font-size: 0.95rem;
+      color: var(--ios-blue);
     }
 
     .btn {
@@ -89,28 +103,28 @@
       background: #000;
     }
 
-    .form-group { margin-top: 10px; }
+    .form-group { margin-top: 6px; }
 
     label.field-label {
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       font-weight: 600;
       color: #666;
       display: block;
-      margin-bottom: 4px;
+      margin-bottom: 3px;
     }
 
     input[type="text"], input[type="password"], textarea {
       width: 100%;
-      padding: 10px;
-      font-size: 1rem;
+      padding: 9px;
+      font-size: 0.95rem;
       border: 1px solid #C7C7CC;
       border-radius: 8px;
       box-sizing: border-box;
       background-color: #FAFAFA;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
-    textarea { height: 80px; }
+    textarea { height: 70px; }
 
     .status-box {
       font-size: 0.9rem;
@@ -145,7 +159,7 @@
 
   <!-- INNSTILLINGER / API-NØKKEL -->
   <div class="card">
-    <label class="field-label">OpenAI API-Nøkkel (lagres på iPhonen):</label>
+    <label class="field-label">OpenAI API-Nøkkel:</label>
     <input type="password" id="apiKeyInput" placeholder="sk-..." onchange="lagreApiKey()">
   </div>
 
@@ -161,28 +175,37 @@
     <div id="status" class="status-box">Legg inn API-nøkkel og ta et bilde</div>
 
     <button id="ocrBtn" class="btn btn-secondary" onclick="kjoerAIVisjon()">
-      🤖 2. Les ut tekst med AI
+      🤖 2. Les ut personer med AI
     </button>
   </div>
 
-  <!-- TRINN 3: REDIGER OG LEGG TIL -->
-  <div class="card">
-    <div class="form-group">
-      <label class="field-label">Navn:</label>
-      <input type="text" id="fieldNavn" placeholder="Fullt navn">
+  <!-- TRINN 3: REDIGER PERSONER OG LEGG TIL -->
+  <div class="card" id="editCard">
+    <h3>Funnet(e) person(er) på steinen:</h3>
+    
+    <!-- Dynamiske personfelt genereres her -->
+    <div id="personerContainer">
+      <div class="person-box">
+        <label class="field-label">Navn:</label>
+        <input type="text" class="p-navn" placeholder="Fullt navn">
+        <label class="field-label">Fødselsdato:</label>
+        <input type="text" class="p-foedt" placeholder="DD.MM.YYYY">
+        <label class="field-label">Dødsdato:</label>
+        <input type="text" class="p-doed" placeholder="DD.MM.YYYY">
+      </div>
+    </div>
 
-      <label class="field-label">Fødselsdato:</label>
-      <input type="text" id="fieldFoedt" placeholder="f.eks. 12.05.1890">
+    <button class="btn btn-secondary" onclick="leggTilTomPersonFelt()" style="min-height:40px; font-size:0.9rem;">
+      ➕ Legg til én person til manuelt
+    </button>
 
-      <label class="field-label">Dødsdato:</label>
-      <input type="text" id="fieldDoed" placeholder="f.eks. 20.11.1965">
-
-      <label class="field-label">Råtekst fra steinen:</label>
+    <div class="form-group" style="margin-top:12px;">
+      <label class="field-label">Felles råtekst på steinen:</label>
       <textarea id="ocrResult" placeholder="Fullstendig tekst..."></textarea>
     </div>
 
-    <button id="addBtn" class="btn btn-success" onclick="leggTilIListe()">
-      ➕ 3. Legg til i listen
+    <button id="addBtn" class="btn btn-success" onclick="leggTilAlleIListe()">
+      ➕ 3. Legg til alle i listen
     </button>
 
     <button class="btn btn-secondary" onclick="nullstillForNesteBilde()">
@@ -206,6 +229,7 @@
       <table id="dataTable">
         <thead>
           <tr>
+            <th>#</th>
             <th>Navn</th>
             <th>Født</th>
             <th>Død</th>
@@ -219,13 +243,14 @@
   <script>
     let registreringer = [];
     let valgtBildeFil = null;
+    let bildeTeller = 0;
 
     const cameraInput = document.getElementById('cameraInput');
     const preview = document.getElementById('preview');
     const status = document.getElementById('status');
     const apiKeyInput = document.getElementById('apiKeyInput');
+    const personerContainer = document.getElementById('personerContainer');
 
-    // Hent lagret API-nøkkel fra iPhone
     window.onload = () => {
       const lagretNykk = localStorage.getItem('openai_api_key');
       if (lagretNykk) {
@@ -247,11 +272,10 @@
       preview.src = URL.createObjectURL(valgtBildeFil);
       preview.style.display = 'block';
 
-      status.innerText = 'Bilde mottatt! Trykk på «2. Les ut tekst med AI».';
+      status.innerText = 'Bilde mottatt! Trykk på «2. Les ut personer med AI».';
       document.getElementById('ocrBtn').className = "btn btn-primary";
     });
 
-    // Konverterer bilde til Base64 for sending til OpenAI API
     function konverterBildeTilBase64(file, maxDim = 1000) {
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -298,7 +322,7 @@
       try {
         const base64Image = await konverterBildeTilBase64(valgtBildeFil, 1000);
 
-        status.innerText = 'AI analyserer gravsteinen... Vennligst vent.';
+        status.innerText = 'AI analyserer gravsteinen for alle gravlagte...';
 
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
@@ -311,25 +335,23 @@
             messages: [
               {
                 role: "system",
-                content: "Du er en ekspert på å tolke tekster og inngraveringer på norske gravsteiner. Returner kun et gyldig JSON-objekt uten noen annen tekst eller markdown formatting."
+                content: "Du er en ekspert på å tolke tekster og inngraveringer på norske gravsteiner. Det kan være én eller FLERE gravlagte personer på samme stein. Returner kun et gyldig JSON-objekt uten markdown-formatering."
               },
               {
                 role: "user",
                 content: [
                   {
                     type: "text",
-                    text: "Analyser teksten på denne gravsteinen. Trekk ut:\n1. Fullt navn på avdøde (navn)\n2. Fødselsdato (foedt) - oppgi i formatet DD.MM.YYYY hvis mulig, eller det som står\n3. Dødsdato (doed) - oppgi i formatet DD.MM.YYYY hvis mulig, eller det som står\n4. Råtekst (raatekst) - hele teksten nøyaktig slik den står på steinen.\n\nSvar KUN i dette JSON-formatet:\n{\"navn\": \"...\", \"foedt\": \"...\", \"doed\": \"...\", \"raatekst\": \"...\"}"
+                    text: "Analyser teksten på denne gravsteinen. Finn ALLE personer som er innskrevet. For hver person utled:\n- Fullt navn (navn)\n- Fødselsdato (foedt) [DD.MM.YYYY hvis mulig]\n- Dødsdato (doed) [DD.MM.YYYY hvis mulig]\n\nInkluder også råteksten for hele steinen (raatekst).\n\nSvar KUN i dette JSON-formatet:\n{\n  \"personer\": [\n    {\"navn\": \"...\", \"foedt\": \"...\", \"doed\": \"...\"}\n  ],\n  \"raatekst\": \"...\"\n}"
                   },
                   {
                     type: "image_url",
-                    image_url: {
-                      url: base64Image
-                    }
+                    image_url: { url: base64Image }
                   }
                 ]
               }
             ],
-            max_tokens: 300,
+            max_tokens: 500,
             temperature: 0.1
           })
         });
@@ -341,18 +363,16 @@
 
         const data = await response.json();
         let rawContent = data.choices[0].message.content.trim();
-        
-        // Rengjør eventuell markdown JSON-pakking
         rawContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
         
         const resultat = JSON.parse(rawContent);
 
-        document.getElementById('fieldNavn').value = resultat.navn || '';
-        document.getElementById('fieldFoedt').value = resultat.foedt || '';
-        document.getElementById('fieldDoed').value = resultat.doed || '';
+        // Generer redigeringsfelt for hver funnet person
+        byggPersonSkjema(resultat.personer || []);
         document.getElementById('ocrResult').value = resultat.raatekst || '';
 
-        status.innerText = 'AI-analyse fullført! Kontroller feltene og trykk «3. Legg til».';
+        const antall = (resultat.personer || []).length;
+        status.innerText = `AI fant ${antall} person(er). Kontroller feltene og trykk «3. Legg til alle».`;
 
       } catch (err) {
         console.error(err);
@@ -361,28 +381,79 @@
       }
     }
 
-    function leggTilIListe() {
-      const navn = document.getElementById('fieldNavn').value.trim();
-      const foedt = document.getElementById('fieldFoedt').value.trim();
-      const doed = document.getElementById('fieldDoed').value.trim();
-      const raatekst = document.getElementById('ocrResult').value.trim();
+    function byggPersonSkjema(personer) {
+      personerContainer.innerHTML = '';
 
-      if (!navn && !raatekst) {
-        alert('Fyll inn minst navn eller tekst før du legger til.');
+      if (personer.length === 0) {
+        leggTilTomPersonFelt();
         return;
       }
 
-      registreringer.push({
-        nr: registreringer.length + 1,
-        tid: new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit'}),
-        navn: navn,
-        foedt: foedt,
-        doed: doed,
-        raatekst: raatekst
+      personer.forEach((p, index) => {
+        const box = document.createElement('div');
+        box.className = 'person-box';
+        box.innerHTML = `
+          <h4>Person ${index + 1}</h4>
+          <label class="field-label">Navn:</label>
+          <input type="text" class="p-navn" value="${p.navn || ''}" placeholder="Fullt navn">
+          <label class="field-label">Fødselsdato:</label>
+          <input type="text" class="p-foedt" value="${p.foedt || ''}" placeholder="DD.MM.YYYY">
+          <label class="field-label">Dødsdato:</label>
+          <input type="text" class="p-doed" value="${p.doed || ''}" placeholder="DD.MM.YYYY">
+        `;
+        personerContainer.appendChild(box);
+      });
+    }
+
+    function leggTilTomPersonFelt() {
+      const antall = personerContainer.querySelectorAll('.person-box').length;
+      const box = document.createElement('div');
+      box.className = 'person-box';
+      box.innerHTML = `
+        <h4>Person ${antall + 1}</h4>
+        <label class="field-label">Navn:</label>
+        <input type="text" class="p-navn" placeholder="Fullt navn">
+        <label class="field-label">Fødselsdato:</label>
+        <input type="text" class="p-foedt" placeholder="DD.MM.YYYY">
+        <label class="field-label">Dødsdato:</label>
+        <input type="text" class="p-doed" placeholder="DD.MM.YYYY">
+      `;
+      personerContainer.appendChild(box);
+    }
+
+    function leggTilAlleIListe() {
+      const personBokser = personerContainer.querySelectorAll('.person-box');
+      const raatekst = document.getElementById('ocrResult').value.trim();
+      let lagretNoen = false;
+
+      bildeTeller++;
+
+      personBokser.forEach((box) => {
+        const navn = box.querySelector('.p-navn').value.trim();
+        const foedt = box.querySelector('.p-foedt').value.trim();
+        const doed = box.querySelector('.p-doed').value.trim();
+
+        if (navn || foedt || doed) {
+          registreringer.push({
+            nr: registreringer.length + 1,
+            steinId: `Stein #${bildeTeller}`,
+            tid: new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit'}),
+            navn: navn,
+            foedt: foedt,
+            doed: doed,
+            raatekst: raatekst
+          });
+          lagretNoen = true;
+        }
       });
 
+      if (!lagretNoen && !raatekst) {
+        alert('Fyll inn minst én person før du legger til.');
+        return;
+      }
+
       oppdaterTabell();
-      alert('Lagret i listen!');
+      alert('Registrert i listen!');
       nullstillForNesteBilde();
     }
 
@@ -391,11 +462,10 @@
       cameraInput.value = '';
       preview.style.display = 'none';
 
-      document.getElementById('fieldNavn').value = '';
-      document.getElementById('fieldFoedt').value = '';
-      document.getElementById('fieldDoed').value = '';
-      document.getElementById('ocrResult').value = '';
+      personerContainer.innerHTML = '';
+      leggTilTomPersonFelt();
 
+      document.getElementById('ocrResult').value = '';
       document.getElementById('ocrBtn').className = "btn btn-secondary";
       status.innerText = 'Klar til å ta nytt bilde (Knapp 1).';
     }
@@ -407,7 +477,8 @@
       registreringer.forEach((r) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td><strong>${r.navn || 'Uten navn'}</strong></td>
+          <td>${r.nr}</td>
+          <td><strong>${r.navn || 'Uten navn'}</strong><br><small style="color:#777">${r.steinId}</small></td>
           <td>${r.foedt}</td>
           <td>${r.doed}</td>
         `;
@@ -425,11 +496,12 @@
 
       const excelData = registreringer.map(r => ({
         "Nr": r.nr,
+        "Stein ID": r.steinId,
         "Klokkeslett": r.tid,
         "Navn": r.navn,
         "Fødselsdato": r.foedt,
         "Dødsdato": r.doed,
-        "Råtekst": r.raatekst
+        "Råtekst (hele steinen)": r.raatekst
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(excelData);
@@ -443,6 +515,7 @@
     function toemListe() {
       if (confirm('Vil du tømme hele tabellen?')) {
         registreringer = [];
+        bildeTeller = 0;
         oppdaterTabell();
       }
     }
