@@ -3,14 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Gravstein OCR - Mobil</title>
+  <title>Gravstein AI OCR - Mobil</title>
   
   <link rel="manifest" href="manifest.json">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-  <!-- Tesseract.js & SheetJS -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- SheetJS for Excel-eksport -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <style>
@@ -80,9 +79,9 @@
       border: 0;
     }
 
-    #preview, #processedPreview {
+    #preview {
       width: 100%;
-      max-height: 220px;
+      max-height: 250px;
       object-fit: contain;
       border-radius: 10px;
       margin: 8px 0;
@@ -100,7 +99,7 @@
       margin-bottom: 4px;
     }
 
-    input[type="text"], textarea {
+    input[type="text"], input[type="password"], textarea {
       width: 100%;
       padding: 10px;
       font-size: 1rem;
@@ -142,8 +141,15 @@
 </head>
 <body>
 
-  <h1>📷 Gravstein Registrering</h1>
+  <h1>🤖 Gravstein AI Registrering</h1>
 
+  <!-- INNSTILLINGER / API-NØKKEL -->
+  <div class="card">
+    <label class="field-label">OpenAI API-Nøkkel (lagres på iPhonen):</label>
+    <input type="password" id="apiKeyInput" placeholder="sk-..." onchange="lagreApiKey()">
+  </div>
+
+  <!-- TRINN 1 & 2: BILDE OG AI-ANALYSING -->
   <div class="card">
     <input type="file" id="cameraInput" class="sr-only" accept="image/*" capture="environment">
 
@@ -151,30 +157,28 @@
       📸 1. Ta bilde / Velg bilde
     </label>
 
-    <img id="preview" alt="Orginalbilde">
-    <canvas id="processedCanvas" style="display:none;"></canvas>
-    <img id="processedPreview" alt="Behandlet bilde for OCR">
+    <img id="preview" alt="Bilde fra kamera">
+    <div id="status" class="status-box">Legg inn API-nøkkel og ta et bilde</div>
 
-    <div id="status" class="status-box">Trykk på blå knapp over for å ta bilde</div>
-
-    <button id="ocrBtn" class="btn btn-secondary" onclick="kjoerOCR()">
-      🔍 2. Les ut tekst (OCR)
+    <button id="ocrBtn" class="btn btn-secondary" onclick="kjoerAIVisjon()">
+      🤖 2. Les ut tekst med AI
     </button>
   </div>
 
+  <!-- TRINN 3: REDIGER OG LEGG TIL -->
   <div class="card">
     <div class="form-group">
       <label class="field-label">Navn:</label>
       <input type="text" id="fieldNavn" placeholder="Fullt navn">
 
       <label class="field-label">Fødselsdato:</label>
-      <input type="text" id="fieldFoedt" placeholder="DD.MM.YYYY eller D-M-YYYY">
+      <input type="text" id="fieldFoedt" placeholder="f.eks. 12.05.1890">
 
       <label class="field-label">Dødsdato:</label>
-      <input type="text" id="fieldDoed" placeholder="DD.MM.YYYY eller D-M-YYYY">
+      <input type="text" id="fieldDoed" placeholder="f.eks. 20.11.1965">
 
-      <label class="field-label">Råtekst fra OCR:</label>
-      <textarea id="ocrResult" placeholder="Råtekst fra steinen..."></textarea>
+      <label class="field-label">Råtekst fra steinen:</label>
+      <textarea id="ocrResult" placeholder="Fullstendig tekst..."></textarea>
     </div>
 
     <button id="addBtn" class="btn btn-success" onclick="leggTilIListe()">
@@ -186,6 +190,7 @@
     </button>
   </div>
 
+  <!-- TRINN 4: TABELL OG EXCEL -->
   <div class="card">
     <h3>Registrerte personer (<span id="count">0</span>)</h3>
 
@@ -217,8 +222,23 @@
 
     const cameraInput = document.getElementById('cameraInput');
     const preview = document.getElementById('preview');
-    const processedPreview = document.getElementById('processedPreview');
     const status = document.getElementById('status');
+    const apiKeyInput = document.getElementById('apiKeyInput');
+
+    // Hent lagret API-nøkkel fra iPhone
+    window.onload = () => {
+      const lagretNykk = localStorage.getItem('openai_api_key');
+      if (lagretNykk) {
+        apiKeyInput.value = lagretNykk;
+        status.innerText = 'Klar til å ta bilde (Knapp 1).';
+      }
+    };
+
+    function lagreApiKey() {
+      const nokkel = apiKeyInput.value.trim();
+      localStorage.setItem('openai_api_key', nokkel);
+      if (nokkel) status.innerText = 'API-nøkkel lagret. Klar til å ta bilde.';
+    }
 
     cameraInput.addEventListener('change', (e) => {
       if (!e.target.files || e.target.files.length === 0) return;
@@ -226,20 +246,18 @@
       valgtBildeFil = e.target.files[0];
       preview.src = URL.createObjectURL(valgtBildeFil);
       preview.style.display = 'block';
-      processedPreview.style.display = 'none';
 
-      status.innerText = 'Bilde mottatt! Trykk på «2. Les ut tekst».';
+      status.innerText = 'Bilde mottatt! Trykk på «2. Les ut tekst med AI».';
       document.getElementById('ocrBtn').className = "btn btn-primary";
     });
 
-    // Avansert bildebehandling for gravsteiner (Gråtone + Høy Kontrast)
-    function forberedBildeForOCR(file) {
+    // Konverterer bilde til Base64 for sending til OpenAI API
+    function konverterBildeTilBase64(file, maxDim = 1000) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
           let width = img.width;
           let height = img.height;
-          const maxDim = 1200;
 
           if (width > maxDim || height > maxDim) {
             if (width > height) {
@@ -251,124 +269,96 @@
             }
           }
 
-          const canvas = document.getElementById('processedCanvas');
+          const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
-          
           ctx.drawImage(img, 0, 0, width, height);
-
-          // Hent pikseldata for bildebehandling
-          const imgData = ctx.getImageData(0, 0, width, height);
-          const data = imgData.data;
-
-          // 1. Gråtone-konvertering + Kontrastforsterkning
-          const contrast = 1.6; // Øk kontrast (1.0 er normal)
-          const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-
-          for (let i = 0; i < data.length; i += 4) {
-            // Luminansberegning for gråtone
-            let gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-            
-            // Kontrastjustering
-            gray = factor * (gray - 128) + 128;
-            gray = Math.min(255, Math.max(0, gray));
-
-            data[i] = gray;     // R
-            data[i + 1] = gray; // G
-            data[i + 2] = gray; // B
-          }
-
-          ctx.putImageData(imgData, 0, 0);
-
-          // Vis det forberedte bildet slik at bruker ser hva OCR "ser"
-          processedPreview.src = canvas.toDataURL('image/jpeg');
-          processedPreview.style.display = 'block';
-
-          canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.onerror = reject;
         img.src = URL.createObjectURL(file);
       });
     }
 
-    async function kjoerOCR() {
+    async function kjoerAIVisjon() {
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        alert('Vennligst legg inn en OpenAI API-nøkkel øverst.');
+        return;
+      }
+
       if (!valgtBildeFil) {
         alert('Ta et bilde først med knapp 1.');
         return;
       }
 
-      status.innerText = 'Forbereder bilde (øker kontrast & fjerner støy)...';
+      status.innerText = 'Klargjør bilde og kobler til AI...';
 
       try {
-        const optimalisertBilde = await forberedBildeForOCR(valgtBildeFil);
+        const base64Image = await konverterBildeTilBase64(valgtBildeFil, 1000);
 
-        status.innerText = 'Laster inn OCR-motor...';
+        status.innerText = 'AI analyserer gravsteinen... Vennligst vent.';
 
-        const worker = await Tesseract.createWorker('nor', 1, {
-          logger: m => {
-            if (m.status === 'recognizing text') {
-              status.innerText = `Leser tekst: ${Math.round(m.progress * 100)}%`;
-            }
-          }
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: "Du er en ekspert på å tolke tekster og inngraveringer på norske gravsteiner. Returner kun et gyldig JSON-objekt uten noen annen tekst eller markdown formatting."
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "Analyser teksten på denne gravsteinen. Trekk ut:\n1. Fullt navn på avdøde (navn)\n2. Fødselsdato (foedt) - oppgi i formatet DD.MM.YYYY hvis mulig, eller det som står\n3. Dødsdato (doed) - oppgi i formatet DD.MM.YYYY hvis mulig, eller det som står\n4. Råtekst (raatekst) - hele teksten nøyaktig slik den står på steinen.\n\nSvar KUN i dette JSON-formatet:\n{\"navn\": \"...\", \"foedt\": \"...\", \"doed\": \"...\", \"raatekst\": \"...\"}"
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: base64Image
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 300,
+            temperature: 0.1
+          })
         });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error?.message || 'Feil ved forespørsel til OpenAI');
+        }
+
+        const data = await response.json();
+        let rawContent = data.choices[0].message.content.trim();
         
-        // Konfigurasjon for å bedre gjenkjenne tall og tegn på stein
-        await worker.setParameters({
-          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅabcdefghijklmnopqrstuvwxyzæøå.-/*† ',
-        });
+        // Rengjør eventuell markdown JSON-pakking
+        rawContent = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        const resultat = JSON.parse(rawContent);
 
-        const ret = await worker.recognize(optimalisertBilde);
-        const funnetTekst = ret.data.text ? ret.data.text.trim() : '';
+        document.getElementById('fieldNavn').value = resultat.navn || '';
+        document.getElementById('fieldFoedt').value = resultat.foedt || '';
+        document.getElementById('fieldDoed').value = resultat.doed || '';
+        document.getElementById('ocrResult').value = resultat.raatekst || '';
 
-        document.getElementById('ocrResult').value = funnetTekst;
-        parsTekst(funnetTekst);
+        status.innerText = 'AI-analyse fullført! Kontroller feltene og trykk «3. Legg til».';
 
-        status.innerText = 'OCR fullført! Kontroller feltene under og trykk «3. Legg til».';
-        await worker.terminate();
       } catch (err) {
         console.error(err);
-        alert('OCR-feil: ' + (err.message || err));
-        status.innerText = 'Kunne ikke lese automatisk. Fyll inn manuelt.';
+        alert('Feil ved AI-lesing: ' + err.message);
+        status.innerText = 'Feil oppstod. Du kan fylle inn manuelt.';
       }
-    }
-
-    function parsTekst(tekst) {
-      if (!tekst) return;
-
-      // Rengjør teksten for enklere uttrekk
-      const linjer = tekst.split('\n').map(l => l.trim()).filter(l => l.length > 1);
-
-      // Sjekker datoer i ulike format (f.eks 12.05.1920, 12-5-1920, 12/5-1920, 1920-2005)
-      const datoRegex = /\b\d{1,2}[\.\/-]\d{1,2}[\.\/-]\d{2,4}\b/g;
-      const datoer = tekst.match(datoRegex) || [];
-
-      // Hvis spesifikke datoer feiler, søk etter bare 4-sifrede årstall (f.eks 1890 og 1975)
-      const aarstallRegex = /\b(17|18|19|20)\d{2}\b/g;
-      const aarstall = tekst.match(aarstallRegex) || [];
-
-      if (datoer.length >= 2) {
-        document.getElementById('fieldFoedt').value = datoer[0];
-        document.getElementById('fieldDoed').value = datoer[1];
-      } else if (datoer.length === 1) {
-        document.getElementById('fieldFoedt').value = datoer[0];
-        document.getElementById('fieldDoed').value = aarstall[1] || '';
-      } else if (aarstall.length >= 2) {
-        document.getElementById('fieldFoedt').value = aarstall[0];
-        document.getElementById('fieldDoed').value = aarstall[1];
-      }
-
-      // Finn navn: Første linje som har mer enn 2 tegn og inneholder primært bokstaver
-      let funnetNavn = '';
-      for (let l of linjer) {
-        // Hopp over linjer som bare har tall/tegn
-        if (/[a-zA-ZæøåÆØÅ]/.test(l) && !/\d{3,}/.test(l)) {
-          // Fjern støytegn
-          funnetNavn = l.replace(/[^a-zA-ZæøåÆØÅ\s-]/g, '').trim();
-          if (funnetNavn.length > 2) break;
-        }
-      }
-      document.getElementById('fieldNavn').value = funnetNavn;
     }
 
     function leggTilIListe() {
@@ -400,7 +390,6 @@
       valgtBildeFil = null;
       cameraInput.value = '';
       preview.style.display = 'none';
-      processedPreview.style.display = 'none';
 
       document.getElementById('fieldNavn').value = '';
       document.getElementById('fieldFoedt').value = '';
