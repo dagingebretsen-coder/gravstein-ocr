@@ -80,7 +80,7 @@
       border: 0;
     }
 
-    #preview {
+    #preview, #processedPreview {
       width: 100%;
       max-height: 220px;
       object-fit: contain;
@@ -111,7 +111,7 @@
       margin-bottom: 8px;
     }
 
-    textarea { height: 70px; }
+    textarea { height: 80px; }
 
     .status-box {
       font-size: 0.9rem;
@@ -151,7 +151,10 @@
       📸 1. Ta bilde / Velg bilde
     </label>
 
-    <img id="preview" alt="Forhåndsvisning">
+    <img id="preview" alt="Orginalbilde">
+    <canvas id="processedCanvas" style="display:none;"></canvas>
+    <img id="processedPreview" alt="Behandlet bilde for OCR">
+
     <div id="status" class="status-box">Trykk på blå knapp over for å ta bilde</div>
 
     <button id="ocrBtn" class="btn btn-secondary" onclick="kjoerOCR()">
@@ -171,7 +174,7 @@
       <input type="text" id="fieldDoed" placeholder="DD.MM.YYYY eller D-M-YYYY">
 
       <label class="field-label">Råtekst fra OCR:</label>
-      <textarea id="ocrResult" placeholder="Teksten vises her..."></textarea>
+      <textarea id="ocrResult" placeholder="Råtekst fra steinen..."></textarea>
     </div>
 
     <button id="addBtn" class="btn btn-success" onclick="leggTilIListe()">
@@ -214,6 +217,7 @@
 
     const cameraInput = document.getElementById('cameraInput');
     const preview = document.getElementById('preview');
+    const processedPreview = document.getElementById('processedPreview');
     const status = document.getElementById('status');
 
     cameraInput.addEventListener('change', (e) => {
@@ -222,18 +226,21 @@
       valgtBildeFil = e.target.files[0];
       preview.src = URL.createObjectURL(valgtBildeFil);
       preview.style.display = 'block';
+      processedPreview.style.display = 'none';
 
       status.innerText = 'Bilde mottatt! Trykk på «2. Les ut tekst».';
       document.getElementById('ocrBtn').className = "btn btn-primary";
     });
 
-    // Funksjon for å nedskalere bildet før OCR (forhindrer minnekrasj i Safari)
-    function nedskalerBilde(file, maxDim = 1200) {
+    // Avansert bildebehandling for gravsteiner (Gråtone + Høy Kontrast)
+    function forberedBildeForOCR(file) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
           let width = img.width;
           let height = img.height;
+          const maxDim = 1200;
+
           if (width > maxDim || height > maxDim) {
             if (width > height) {
               height = Math.round((height * maxDim) / width);
@@ -243,12 +250,42 @@
               height = maxDim;
             }
           }
-          const canvas = document.createElement('canvas');
+
+          const canvas = document.getElementById('processedCanvas');
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
+          
           ctx.drawImage(img, 0, 0, width, height);
-          canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.85);
+
+          // Hent pikseldata for bildebehandling
+          const imgData = ctx.getImageData(0, 0, width, height);
+          const data = imgData.data;
+
+          // 1. Gråtone-konvertering + Kontrastforsterkning
+          const contrast = 1.6; // Øk kontrast (1.0 er normal)
+          const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+          for (let i = 0; i < data.length; i += 4) {
+            // Luminansberegning for gråtone
+            let gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            
+            // Kontrastjustering
+            gray = factor * (gray - 128) + 128;
+            gray = Math.min(255, Math.max(0, gray));
+
+            data[i] = gray;     // R
+            data[i + 1] = gray; // G
+            data[i + 2] = gray; // B
+          }
+
+          ctx.putImageData(imgData, 0, 0);
+
+          // Vis det forberedte bildet slik at bruker ser hva OCR "ser"
+          processedPreview.src = canvas.toDataURL('image/jpeg');
+          processedPreview.style.display = 'block';
+
+          canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
         };
         img.onerror = reject;
         img.src = URL.createObjectURL(file);
@@ -261,23 +298,26 @@
         return;
       }
 
-      status.innerText = 'Klargjør bilde for skanning...';
+      status.innerText = 'Forbereder bilde (øker kontrast & fjerner støy)...';
 
       try {
-        // Skaler ned bildet for å spare Safari-minne
-        const optimalisertBilde = await nedskalerBilde(valgtBildeFil, 1200);
+        const optimalisertBilde = await forberedBildeForOCR(valgtBildeFil);
 
-        status.innerText = 'Laster inn OCR-motor... Vennligst vent.';
+        status.innerText = 'Laster inn OCR-motor...';
 
         const worker = await Tesseract.createWorker('nor', 1, {
           logger: m => {
-            if (m.status === 'loading tesseract core') status.innerText = 'Laster kjernemodul...';
-            else if (m.status === 'initializing tesseract') status.innerText = 'Initialiserer språk...';
-            else if (m.status === 'loading language traineddata') status.innerText = 'Laster norsk ordliste...';
-            else if (m.status === 'recognizing text') status.innerText = `Leser tekst: ${Math.round(m.progress * 100)}%`;
+            if (m.status === 'recognizing text') {
+              status.innerText = `Leser tekst: ${Math.round(m.progress * 100)}%`;
+            }
           }
         });
         
+        // Konfigurasjon for å bedre gjenkjenne tall og tegn på stein
+        await worker.setParameters({
+          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅabcdefghijklmnopqrstuvwxyzæøå.-/*† ',
+        });
+
         const ret = await worker.recognize(optimalisertBilde);
         const funnetTekst = ret.data.text ? ret.data.text.trim() : '';
 
@@ -295,20 +335,37 @@
 
     function parsTekst(tekst) {
       if (!tekst) return;
-      const linjer = tekst.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-      // Støtter xx.xx.xxxx, xx-xx-xxxx, x-x-xxxx, x.x.xxxx, xx/xx/xxxx osv.
+      // Rengjør teksten for enklere uttrekk
+      const linjer = tekst.split('\n').map(l => l.trim()).filter(l => l.length > 1);
+
+      // Sjekker datoer i ulike format (f.eks 12.05.1920, 12-5-1920, 12/5-1920, 1920-2005)
       const datoRegex = /\b\d{1,2}[\.\/-]\d{1,2}[\.\/-]\d{2,4}\b/g;
       const datoer = tekst.match(datoRegex) || [];
 
-      document.getElementById('fieldFoedt').value = datoer[0] || '';
-      document.getElementById('fieldDoed').value = datoer[1] || '';
+      // Hvis spesifikke datoer feiler, søk etter bare 4-sifrede årstall (f.eks 1890 og 1975)
+      const aarstallRegex = /\b(17|18|19|20)\d{2}\b/g;
+      const aarstall = tekst.match(aarstallRegex) || [];
 
+      if (datoer.length >= 2) {
+        document.getElementById('fieldFoedt').value = datoer[0];
+        document.getElementById('fieldDoed').value = datoer[1];
+      } else if (datoer.length === 1) {
+        document.getElementById('fieldFoedt').value = datoer[0];
+        document.getElementById('fieldDoed').value = aarstall[1] || '';
+      } else if (aarstall.length >= 2) {
+        document.getElementById('fieldFoedt').value = aarstall[0];
+        document.getElementById('fieldDoed').value = aarstall[1];
+      }
+
+      // Finn navn: Første linje som har mer enn 2 tegn og inneholder primært bokstaver
       let funnetNavn = '';
       for (let l of linjer) {
-        if (!/\d/.test(l) && l.length > 2) {
-          funnetNavn = l;
-          break;
+        // Hopp over linjer som bare har tall/tegn
+        if (/[a-zA-ZæøåÆØÅ]/.test(l) && !/\d{3,}/.test(l)) {
+          // Fjern støytegn
+          funnetNavn = l.replace(/[^a-zA-ZæøåÆØÅ\s-]/g, '').trim();
+          if (funnetNavn.length > 2) break;
         }
       }
       document.getElementById('fieldNavn').value = funnetNavn;
@@ -343,6 +400,7 @@
       valgtBildeFil = null;
       cameraInput.value = '';
       preview.style.display = 'none';
+      processedPreview.style.display = 'none';
 
       document.getElementById('fieldNavn').value = '';
       document.getElementById('fieldFoedt').value = '';
