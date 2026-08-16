@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Gravstein OCR - Mobil</title>
+  
+  <!-- DISSE TO LINJENE ER NYE FOR PWA-STØTTE PÅ IPHONE -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon.png"> <!-- Du kan legge til et ikon-bilde senere -->
+
+  <!-- Tesseract.js & SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <style>
+    :root {
+      --ios-blue: #007AFF;
+      --ios-green: #34C759;
+      --ios-gray: #8E8E93;
+      --ios-red: #FF3B30;
+      --ios-bg: #F2F2F7;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      background-color: var(--ios-bg);
+      margin: 0;
+      padding: 12px;
+      color: #000;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    h1 {
+      font-size: 1.2rem;
+      text-align: center;
+      margin: 8px 0 16px 0;
+    }
+
+    .card {
+      background: #FFFFFF;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 52px;
+      padding: 12px 16px;
+      margin: 8px 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      border-radius: 12px;
+      border: none;
+      box-sizing: border-box;
+      cursor: pointer;
+      text-decoration: none;
+      text-align: center;
+    }
+
+    .btn:active { opacity: 0.7; }
+    .btn-primary { background-color: var(--ios-blue); color: white; }
+    .btn-success { background-color: var(--ios-green); color: white; }
+    .btn-secondary { background-color: #E5E5EA; color: #000; }
+    .btn-danger { background-color: var(--ios-red); color: white; }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+
+    #preview {
+      width: 100%;
+      max-height: 220px;
+      object-fit: contain;
+      border-radius: 10px;
+      margin: 8px 0;
+      display: none;
+      background: #000;
+    }
+
+    .form-group { margin-top: 10px; }
+
+    label.field-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #666;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    input[type="text"], textarea {
+      width: 100%;
+      padding: 10px;
+      font-size: 1rem;
+      border: 1px solid #C7C7CC;
+      border-radius: 8px;
+      box-sizing: border-box;
+      background-color: #FAFAFA;
+      margin-bottom: 8px;
+    }
+
+    textarea { height: 70px; }
+
+    .status-box {
+      font-size: 0.9rem;
+      color: #555;
+      text-align: center;
+      padding: 8px;
+      border-radius: 8px;
+      background: #EFEFF4;
+      margin: 8px 0;
+      font-weight: 500;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+
+    th, td {
+      border-bottom: 1px solid #E5E5EA;
+      padding: 8px;
+      text-align: left;
+    }
+
+    th { background: #F9F9F9; }
+  </style>
+</head>
+<body>
+
+  <h1>📷 Gravstein Registrering</h1>
+
+  <div class="card">
+    <input type="file" id="cameraInput" class="sr-only" accept="image/*" capture="environment">
+
+    <label for="cameraInput" class="btn btn-primary">
+      📸 1. Ta bilde / Velg bilde
+    </label>
+
+    <img id="preview" alt="Forhåndsvisning">
+    <div id="status" class="status-box">Trykk på blå knapp over for å ta bilde</div>
+
+    <button id="ocrBtn" class="btn btn-secondary" onclick="kjoerOCR()">
+      🔍 2. Les ut tekst (OCR)
+    </button>
+  </div>
+
+  <div class="card">
+    <div class="form-group">
+      <label class="field-label">Navn:</label>
+      <input type="text" id="fieldNavn" placeholder="Fullt navn">
+
+      <label class="field-label">Fødselsdato:</label>
+      <input type="text" id="fieldFoedt" placeholder="DD.MM.YYYY">
+
+      <label class="field-label">Dødsdato:</label>
+      <input type="text" id="fieldDoed" placeholder="DD.MM.YYYY">
+
+      <label class="field-label">Råtekst fra OCR:</label>
+      <textarea id="ocrResult" placeholder="Teksten vises her..."></textarea>
+    </div>
+
+    <button id="addBtn" class="btn btn-success" onclick="leggTilIListe()">
+      ➕ 3. Legg til i listen
+    </button>
+
+    <button class="btn btn-secondary" onclick="nullstillForNesteBilde()">
+      🔄 4. Neste / Nytt bilde
+    </button>
+  </div>
+
+  <div class="card">
+    <h3>Registrerte personer (<span id="count">0</span>)</h3>
+
+    <button class="btn btn-success" onclick="eksporterTilExcel()">
+      📊 Last ned Excel-fil (.xlsx)
+    </button>
+
+    <button class="btn btn-danger" onclick="toemListe()" style="margin-top: 12px; font-size: 0.85rem; min-height: 40px;">
+      🗑️ Tøm listen
+    </button>
+
+    <div style="overflow-x:auto; margin-top: 10px;">
+      <table id="dataTable">
+        <thead>
+          <tr>
+            <th>Navn</th>
+            <th>Født</th>
+            <th>Død</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // JS logikken er uendret fra forrige fungerende versjon
+    let registreringer = [];
+    let valgtBildeFil = null;
+
+    const cameraInput = document.getElementById('cameraInput');
+    const preview = document.getElementById('preview');
+    const status = document.getElementById('status');
+
+    cameraInput.addEventListener('change', (e) => {
+      if (!e.target.files || e.target.files.length === 0) return;
+
+      valgtBildeFil = e.target.files[0];
+      preview.src = URL.createObjectURL(valgtBildeFil);
+      preview.style.display = 'block';
+
+      status.innerText = 'Bilde mottatt! Trykk nå på «2. Les ut tekst».';
+      
+      const ocrBtn = document.getElementById('ocrBtn');
+      ocrBtn.className = "btn btn-primary";
+    });
+
+    async function kjoerOCR() {
+      if (!valgtBildeFil) {
+        alert('Ta et bilde først med knapp 1.');
+        return;
+      }
+
+      status.innerText = 'Startes OCR-skanning... Vennligst vent.';
+
+      try {
+        const worker = await Tesseract.createWorker('nor', 1, {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              status.innerText = `Leser... ${Math.round(m.progress * 100)}%`;
+            }
+          }
+        });
+        
+        const ret = await worker.recognize(valgtBildeFil);
+        const funnetTekst = ret.data.text ? ret.data.text.trim() : '';
+
+        document.getElementById('ocrResult').value = funnetTekst;
+        parsTekst(funnetTekst);
+
+        status.innerText = 'OCR fullført! Kontroller feltene under og trykk «3. Legg til».';
+        await worker.terminate();
+      } catch (err) {
+        console.error(err);
+        alert('OCR-feil: ' + err.message + '\nDu kan skrive inn teksten manuelt.');
+        status.innerText = 'Kunne ikke lese automatisk. Fyll inn manuelt.';
+      }
+    }
+
+    function parsTekst(tekst) {
+      if (!tekst) return;
+      const linjer = tekst.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const datoRegex = /(\d{1,2}[\.\/-]\d{1,2}[\.\/-]\d{2,4})/g;
+      const datoer = tekst.match(datoRegex) || [];
+      document.getElementById('fieldFoedt').value = datoer[0] || '';
+      document.getElementById('fieldDoed').value = datoer[1] || '';
+      let funnetNavn = '';
+      for (let l of linjer) {
+        if (!/\d/.test(l) && l.length > 2) {
+          funnetNavn = l;
+          break;
+        }
+      }
+      document.getElementById('fieldNavn').value = funnetNavn;
+    }
+
+    function leggTilIListe() {
+      const navn = document.getElementById('fieldNavn').value.trim();
+      const foedt = document.getElementById('fieldFoedt').value.trim();
+      const doed = document.getElementById('fieldDoed').value.trim();
+      const raatekst = document.getElementById('ocrResult').value.trim();
+      if (!navn && !raatekst) {
+        alert('Fyll inn minst navn eller tekst før du legger til.');
+        return;
+      }
+      registreringer.push({
+        nr: registreringer.length + 1,
+        tid: new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit'}),
+        navn: navn,
+        foedt: foedt,
+        doed: doed,
+        raatekst: raatekst
+      });
+      oppdaterTabell();
+      alert('Lagret i listen!');
+      nullstillForNesteBilde();
+    }
+
+    function nullstillForNesteBilde() {
+      valgtBildeFil = null;
+      cameraInput.value = '';
+      preview.style.display = 'none';
+      document.getElementById('fieldNavn').value = '';
+      document.getElementById('fieldFoedt').value = '';
+      document.getElementById('fieldDoed').value = '';
+      document.getElementById('ocrResult').value = '';
+      const ocrBtn = document.getElementById('ocrBtn');
+      ocrBtn.className = "btn btn-secondary";
+      status.innerText = 'Klar til å ta nytt bilde (Knapp 1).';
+    }
+
+    function oppdaterTabell() {
+      const tbody = document.querySelector('#dataTable tbody');
+      tbody.innerHTML = '';
+      registreringer.forEach((r) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><strong>${r.navn || 'Uten navn'}</strong></td><td>${r.foedt}</td><td>${r.doed}</td>`;
+        tbody.appendChild(tr);
+      });
+      document.getElementById('count').innerText = registreringer.length;
+    }
+
+    function eksporterTilExcel() {
+      if (registreringer.length === 0) {
+        alert('Ingen registrerte data i listen ennå.');
+        return;
+      }
+      const excelData = registreringer.map(r => ({
+        "Nr": r.nr, "Klokkeslett": r.tid, "Navn": r.navn, "Fødselsdato": r.foedt, "Dødsdato": r.doed, "Råtekst": r.raatekst
+      }));
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Gravsteiner");
+      const datoStr = new Date().toISOString().slice(0,10);
+      XLSX.writeFile(workbook, `gravsteiner_${datoStr}.xlsx`);
+    }
+
+    function toemListe() {
+      if (confirm('Vil du tømme hele tabellen?')) {
+        registreringer = [];
+        oppdaterTabell();
+      }
+    }
+  </script>
+</body>
+</html>
